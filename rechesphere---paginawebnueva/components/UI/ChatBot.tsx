@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MessageCircle, X, Send, Paperclip, Smile, Check, Calendar, Mail, AlertTriangle } from 'lucide-react';
@@ -9,37 +8,38 @@ import { GOOGLE_SHEETS_WEBHOOK_URL } from '../../constants';
 
 const SYSTEM_INSTRUCTION = `
 Eres "Lisa", del equipo de "RecheSphere".
-Tu objetivo principal es conseguir el LEAD (Nombre y Email) y llevarlos a agendar cita, pero actuando como una persona real en WhatsApp, no un robot.
+Tu objetivo principal es conseguir el LEAD (Nombre y Email) y llevarlos a agendar cita.
+
+**REGLA DE ORO DE ALMACENAMIENTO (CRÍTICA):**
+1. **JAMÁS** llames a las herramientas 'send_contact_form' o 'schedule_meeting' si no tienes **AMBOS** datos:
+   - Nombre
+   - Email
+2. Si el usuario te dice "quiero agendar" pero no sabes su nombre o email, PREGUNTA ESOS DATOS PRIMERO.
+3. Si el usuario solo te da el nombre, pide el email. Si solo da el email, pide el nombre.
+4. SOLO cuando tengas nombre Y email confirmados, ejecutas la herramienta para guardar en Google Sheets.
 
 **TU PERSONALIDAD:**
-1. **Conversacional y Astuta:** No sueltes el botón de agendar a la primera. Es tu "premio". Antes de darlo, tienes que conseguir sus datos de forma natural.
-2. **Cero Pesada:** No hagas interrogatorios policiales ("Deme su nombre. Deme su email").
-   - MAL: "Para agendar necesito su nombre y correo electrónico."
-   - BIEN: "Claro! Te paso el hueco ahora mismo. ¿Por quién pregunto?" -> (Usuario responde) -> "Genial Juan. ¿Y a qué correo te mando la confirmación?" -> (Usuario responde) -> [ENTREGAS EL BOTÓN].
-3. **Estilo WhatsApp:** Usa emojis, sé breve, simpática y directa. No uses signos de apertura (¿ ¡).
-
-**REGLAS DE ORO (TOOL: schedule_meeting):**
-1. Esta herramienta requiere **Nombre** y **Email**.
-2. Si el usuario pide cita ("quiero agendar"), **NO** llames a la herramienta todavía si no tienes sus datos.
-3. Conversa para sacarles el nombre y el email primero. Hazlo en dos pasos si es necesario para que sea suave.
-4. SOLO cuando tengas nombre y email, llamas a \`schedule_meeting\`.
-5. Tras mostrar el botón, despídete majamente: "Ahí lo tienes, cualquier duda me dices!".
+1. **Conversacional y Astuta:** No sueltes el botón de agendar a la primera. Consigue los datos de forma natural.
+2. **Cero Pesada:** No hagas interrogatorios policiales.
+   - MAL: "Deme su nombre y correo."
+   - BIEN: "Claro! Te paso el hueco. ¿Por quién pregunto?" -> (Usuario responde) -> "Genial Juan. ¿Y a qué correo te mando la confirmación?" -> (Usuario responde) -> [GUARDAS DATOS Y ENTREGAS EL BOTÓN].
+3. **Estilo WhatsApp:** Usa emojis, sé breve, simpática y directa.
 
 **HERRAMIENTAS (TOOLS):**
-1. **send_contact_form**: Para dudas generales. Pide nombre y email suavemente.
-2. **schedule_meeting**: Para agendar llamada. REQUIERE recolectar nombre y email antes.
+1. **send_contact_form**: Úsala cuando el usuario tenga una duda o quiera que le contacten, PERO SOLO si ya tienes Nombre y Email.
+2. **schedule_meeting**: Úsala para agendar llamada, PERO SOLO si ya tienes Nombre y Email.
 `;
 
 // Definición de herramientas para Gemini
 const toolsDefinition: FunctionDeclaration[] = [
   {
     name: "send_contact_form",
-    description: "Envía los datos del usuario y su consulta al equipo de RecheSphere vía email.",
+    description: "Envía los datos a Google Sheets para notificar a Telegram. REQUIERE NOMBRE Y EMAIL.",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        name: { type: Type.STRING, description: "Nombre del usuario" },
-        email: { type: Type.STRING, description: "Email del usuario" },
+        name: { type: Type.STRING, description: "Nombre del usuario (OBLIGATORIO)" },
+        email: { type: Type.STRING, description: "Email del usuario (OBLIGATORIO)" },
         message: { type: Type.STRING, description: "Mensaje, duda o resumen de la conversación" }
       },
       required: ["name", "email", "message"]
@@ -47,15 +47,15 @@ const toolsDefinition: FunctionDeclaration[] = [
   },
   {
     name: "schedule_meeting",
-    description: "Genera un botón interactivo para agendar reunión. USAR SOLO TRAS OBTENER NOMBRE Y EMAIL.",
+    description: "Guarda el lead y genera el botón de cita. REQUIERE NOMBRE Y EMAIL.",
     parameters: {
       type: Type.OBJECT,
       properties: {
         name: { type: Type.STRING, description: "Nombre del usuario (OBLIGATORIO)" },
         email: { type: Type.STRING, description: "Email del usuario (OBLIGATORIO)" },
-        preferred_time: { type: Type.STRING, description: "Día y hora que el usuario prefiere (ej: Lunes por la tarde)" }
+        preferred_time: { type: Type.STRING, description: "Preferencia horaria (opcional)" }
       },
-      required: ["name", "email"] // Forzamos a la IA a preguntar esto antes de llamar a la función
+      required: ["name", "email"]
     }
   }
 ];
@@ -89,32 +89,24 @@ const ChatBot: React.FC = () => {
   useEffect(() => {
     const initChat = async () => {
       try {
-        // Robust safety check for API Key access in browser environment
-        let apiKey = '';
-        try {
-          // @ts-ignore - process might be polyfilled by Vite or missing
-          if (typeof process !== 'undefined' && process.env) {
-             // @ts-ignore
-             apiKey = process.env.API_KEY;
-          }
-        } catch (e) {
-          console.warn("No se pudo acceder a process.env de forma estándar");
-        }
+        // En Vite + Vercel, usamos process.env.API_KEY directamente.
+        // Vite reemplazará este string por el valor real en tiempo de compilación.
+        // No necesitamos comprobar "typeof process", ya que Vite inyecta el valor como un string literal.
+        const apiKey = process.env.API_KEY;
 
         if (apiKey) {
           const ai = new GoogleGenAI({ apiKey: apiKey });
           const chat = ai.chats.create({
-            model: 'gemini-2.5-flash', // Revertido a 2.5 Flash para estabilidad
+            model: 'gemini-2.5-flash',
             config: {
               systemInstruction: SYSTEM_INSTRUCTION,
               tools: [{ functionDeclarations: toolsDefinition }],
-              // ThinkingConfig eliminado para evitar conflicto con Tools/Model
             },
           });
           setChatSession(chat);
           setConnectionError(null);
         } else {
-          console.warn("API_KEY no encontrada. Asegúrate de que está en las variables de entorno de Vercel.");
+          console.warn("API_KEY no encontrada. El ChatBot no funcionará.");
           setConnectionError("Falta API Key");
         }
       } catch (error) {
@@ -133,64 +125,65 @@ const ChatBot: React.FC = () => {
 
   // --- LÓGICA DE HERRAMIENTAS ---
 
+  const sendToGoogleSheets = async (data: any) => {
+      // VALIDACIÓN FINAL DE SEGURIDAD (CLIENT-SIDE)
+      // Si por alguna razón la IA intenta enviar sin nombre o email, cancelamos el envío real
+      if (!data.nombre || !data.email || data.nombre === 'undefined' || data.email === 'undefined') {
+          console.warn("Intento de envío bloqueado: Faltan datos (Nombre o Email).");
+          return false;
+      }
+
+      if (GOOGLE_SHEETS_WEBHOOK_URL && GOOGLE_SHEETS_WEBHOOK_URL.startsWith('http')) {
+          try {
+              await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
+                  method: "POST",
+                  mode: "no-cors", // Importante para Google Scripts
+                  headers: {
+                      'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(data)
+              });
+              console.log("Datos enviados a Google Sheets/Telegram.");
+              return true;
+          } catch (e) {
+              console.error("Error enviando datos:", e);
+              return false;
+          }
+      }
+      return false;
+  };
+
   const executeSendEmail = async (args: any) => {
     const payload = {
       nombre: args.name,
       email: args.email,
       mensaje_chat: args.message,
-      telefono: "No compartido", // Default para que la columna no quede vacía
-      web: "No compartida",      // Default para que la columna no quede vacía
-      interes: "Lead desde Chat", // Default para que la columna no quede vacía
+      telefono: "Chat - No provisto", 
+      web: "Chat - No provisto",      
+      interes: "Consulta General Chat", 
       empresa: "No indicada",
       facturacion: "No indicada",
       sector: "No indicado",
       fecha: new Date().toLocaleDateString(),
       hora: new Date().toLocaleTimeString(),
-      origen: "ChatBot WhatsApp"
+      origen: "ChatBot AI",
+      notificar_telegram: true, // FLAG IMPORTANTE
+      estado: "LEAD_COMPLETO"
     };
 
-    try {
-      // OPCIÓN 1: Google Sheets (Si está configurado) - JSON FORMAT
-      if (GOOGLE_SHEETS_WEBHOOK_URL && GOOGLE_SHEETS_WEBHOOK_URL.startsWith('http')) {
-          await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
-             method: "POST",
-             mode: "no-cors",
-             headers: {
-                 'Content-Type': 'application/json',
-             },
-             body: JSON.stringify(payload)
-          });
-          console.log("Datos enviados a Google Sheets desde Chatbot (JSON/no-cors)");
-          return { status: "success", msg: "Datos guardados correctamente en Google Sheets." };
-      }
-
-      // OPCIÓN 2: FormSubmit.co (Fallback)
-      await fetch("https://formsubmit.co/ajax/rechesphere@gmail.com", {
-        method: "POST",
-        headers: { 
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          _subject: `Nuevo Lead desde ChatBot: ${args.name}`,
-          _template: "table",
-          ...payload
-        })
-      });
-      return { status: "success", msg: "Correo enviado correctamente al equipo." };
-    } catch (error) {
-      return { status: "error", msg: "Hubo un error técnico al enviar el correo." };
-    }
+    const success = await sendToGoogleSheets(payload);
+    if (!success && (!args.name || !args.email)) return { result: "Faltan datos, pregunta al usuario." };
+    
+    return { status: "success", msg: "Datos guardados y notificados." };
   };
 
   const executeSchedule = async (args: any) => {
-    // 1. Enviar datos a Google Sheets PRIMERO (Captura de Lead)
-    // Esto asegura que aunque el usuario no termine de agendar en Cal.com, tenemos el lead.
+    // 1. Enviar datos a Google Sheets PRIMERO (Captura de Lead Completa)
     const payload = {
-        nombre: args.name || "No especificado",
-        email: args.email || "No especificado",
-        telefono: "No compartido",
-        web: "No compartida",
+        nombre: args.name,
+        email: args.email,
+        telefono: "Chat - Agendando",
+        web: "Chat - Agendando",
         interes: "Intención de Agendar Cita",
         empresa: "No indicada",
         facturacion: "No indicada",
@@ -198,24 +191,13 @@ const ChatBot: React.FC = () => {
         mensaje_chat: `Preferencia horaria: ${args.preferred_time || 'No indicada'}`,
         fecha: new Date().toLocaleDateString(),
         hora: new Date().toLocaleTimeString(),
-        origen: "ChatBot Schedule Tool"
+        origen: "ChatBot Schedule Tool",
+        notificar_telegram: true, // FLAG IMPORTANTE
+        estado: "LEAD_COMPLETO"
     };
 
-    try {
-        if (GOOGLE_SHEETS_WEBHOOK_URL && GOOGLE_SHEETS_WEBHOOK_URL.startsWith('http')) {
-             await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
-                method: "POST",
-                mode: "no-cors",
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload)
-            });
-            console.log("Datos de cita enviados a Google Sheets (Shadow Lead)");
-        }
-    } catch (e) {
-        console.error("Error salvando lead de cita:", e);
-    }
+    const success = await sendToGoogleSheets(payload);
+     if (!success && (!args.name || !args.email)) return { result: "Faltan datos, pregunta al usuario." };
 
     // 2. Construir URL de Cal.com
     let url = 'https://cal.com/rechesphere/15min';
@@ -224,7 +206,7 @@ const ChatBot: React.FC = () => {
     if (args.name) params.append('name', args.name);
     if (args.email) params.append('email', args.email);
     
-    let notes = "Reserva desde ChatBot.";
+    let notes = "Reserva iniciada desde ChatBot.";
     if (args.preferred_time) notes += ` Preferencia del usuario: ${args.preferred_time}`;
     
     params.append('notes', notes);
@@ -234,7 +216,6 @@ const ChatBot: React.FC = () => {
     return { 
       status: "success", 
       url: finalUrl, 
-      // Nota interna para el sistema, no se muestra al usuario directamente
       internalMsg: "Button displayed." 
     };
   };
@@ -244,12 +225,11 @@ const ChatBot: React.FC = () => {
   const handleSendMessage = async () => {
     if (!inputValue.trim()) return;
 
-    // Check for initialization errors or missing session
     if (connectionError) {
        setMessages(prev => [...prev, {
          id: Date.now().toString(),
          role: 'model',
-         text: "⚠️ Error de sistema: No se detectó la API Key. Por favor, configúrala en Vercel > Settings > Environment Variables.",
+         text: "⚠️ Error de sistema. Recarga la página.",
          type: 'error',
          timestamp: new Date()
        }]);
@@ -258,9 +238,7 @@ const ChatBot: React.FC = () => {
     }
 
     if (!chatSession) {
-       // Attempt re-init
        setConnectionError("Conectando...");
-       // Allow user to try again next click
        return;
     }
 
@@ -275,14 +253,12 @@ const ChatBot: React.FC = () => {
       timestamp: new Date()
     }]);
 
-    // ACTIVAMOS "ESCRIBIENDO"
     setIsTyping(true);
 
     try {
       // 2. Enviar a Gemini
       let result = await chatSession.sendMessage({ message: userText });
       
-      // Safe access to text to avoid warning if it's a function call
       // @ts-ignore
       const parts = result.candidates?.[0]?.content?.parts || [];
       const hasText = parts.some((p: any) => p.text);
@@ -307,32 +283,31 @@ const ChatBot: React.FC = () => {
              setMessages(prev => [...prev, {
                id: Date.now().toString() + '_action',
                role: 'model',
-               text: "📧 Guardando tus datos...",
+               text: "📧 Guardando tus datos para avisar al equipo...",
                type: 'system_action',
                timestamp: new Date()
              }]);
              
-             const res = await executeSendEmail(args);
-             functionResponseResult = { result: res.msg };
+             await executeSendEmail(args);
+             functionResponseResult = { result: "Datos enviados a Google Sheets y Telegram." };
 
              setMessages(prev => [...prev, {
                 id: Date.now().toString() + '_confirm',
                 role: 'model',
-                text: "✅ Listo! Hemos recibido tus datos. Te escribimos pronto.",
+                text: "✅ Listo! Te escribimos pronto.",
                 timestamp: new Date()
               }]);
 
           } else if (functionName === 'schedule_meeting') {
-             // AHORA ESPERAMOS A QUE SE ENVIEN LOS DATOS AL SHEET
+             
              const res = await executeSchedule(args);
              
-             // Le decimos a la IA que el botón ya se mostró y le damos instrucciones de qué decir ahora
-             functionResponseResult = { result: "BOTON_MOSTRADO_CORRECTAMENTE. Instrucción: Ahora responde SOLO: 'Si necesitas algo más no dudes en preguntar.' o similar." };
+             functionResponseResult = { result: "Lead guardado y botón mostrado." };
 
              setMessages(prev => [...prev, {
                id: Date.now().toString() + '_schedule',
                role: 'model',
-               text: "Genial! Pulsa abajo para reservar tu hora:",
+               text: "Genial! Aquí tienes el calendario:",
                type: 'system_action',
                actionData: { type: 'schedule', url: res.url },
                timestamp: new Date()
@@ -352,11 +327,9 @@ const ChatBot: React.FC = () => {
         if (responseParts.length > 0) {
              setIsTyping(true);
              try {
-                 // FIX: Pass as object with message property to avoid "ContentUnion is required"
                  const nextResponse = await chatSession.sendMessage({ message: responseParts });
                  setIsTyping(false);
 
-                 // Safe check again
                  const nextParts = nextResponse.candidates?.[0]?.content?.parts || [];
                  const nextHasText = nextParts.some((p: any) => p.text);
 
@@ -371,7 +344,6 @@ const ChatBot: React.FC = () => {
              } catch (innerError) {
                  console.error("Silent error in follow-up:", innerError);
                  setIsTyping(false);
-                 // Swallow error here to avoid showing "Error" message after successful button render
              }
         }
 
