@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
     <title>RecheSphere | Captación de clientes predecible</title>
     <meta name="description" content="Agencia de marketing digital especializada en captación de clientes predecible mediante Meta Ads y embudos de venta." />
-    <!-- Tailwind CSS via CDN (Mantenemos esto ya que no hay build step de CSS configurado) -->
+    <!-- Tailwind CSS via CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -35,23 +35,16 @@
       body {
         background-color: #F8FAFC;
         color: #111827;
-        /* Optimización de scroll */
         -webkit-overflow-scrolling: touch;
         overflow-x: hidden;
       }
-      
-      /* Optimización de renderizado de texto */
       * {
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
       }
-
-      /* Evitar highlights azules en tap en móviles */
       button, a {
         -webkit-tap-highlight-color: transparent;
       }
-
-      /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
       }
@@ -65,19 +58,15 @@
       ::-webkit-scrollbar-thumb:hover {
         background: #94a3b8;
       }
-
-      /* CLASES DE UTILIDAD PARA RENDIMIENTO */
       .gpu-accelerated {
         transform: translateZ(0);
         backface-visibility: hidden;
         perspective: 1000px;
         will-change: transform;
       }
-
-      /* Ajustes específicos para móvil */
       @media (max-width: 768px) {
         .blur-xl {
-          backdrop-filter: blur(8px) !important; /* Menos blur para rendimiento */
+          backdrop-filter: blur(8px) !important;
         }
       }
     </style>
