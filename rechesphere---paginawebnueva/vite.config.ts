@@ -3,26 +3,24 @@ import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Tu API Key hardcoded para asegurar que funcione siempre
-  const HARDCODED_API_KEY = "AIzaSyB5uBSibl14v4DOjSBzM0MiluMr0UKd39E";
+  // Carga variables de entorno locales si existen (.env)
+  const env = loadEnv(mode, process.cwd(), '');
+
+  // Prioridad: 
+  // 1. Entorno del Sistema (Vercel) 
+  // 2. Archivo .env local
+  // 3. Fallback hardcoded (solo para emergencias/local sin .env)
+  const API_KEY = process.env.API_KEY || env.API_KEY || "AIzaSyB5uBSibl14v4DOjSBzM0MiluMr0UKd39E";
   
   return {
     plugins: [react()],
     define: {
-      // Inyectamos la clave directamente en process.env.API_KEY
-      'process.env.API_KEY': JSON.stringify(HARDCODED_API_KEY),
+      // Inyectamos la clave en el cliente
+      'process.env.API_KEY': JSON.stringify(API_KEY),
       
-      // Polyfill completo del objeto process para evitar errores de "process is not defined"
-      'process': {
-        env: {
-          API_KEY: HARDCODED_API_KEY,
-          NODE_ENV: mode
-        },
-        version: '' // Mock version
-      },
-      // Redundancia para asegurar compatibilidad
+      // Polyfill simple para evitar errores de librerías que buscan "process"
       'process.env': {
-        API_KEY: HARDCODED_API_KEY,
+        API_KEY: API_KEY,
         NODE_ENV: mode
       }
     },
@@ -30,7 +28,6 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           manualChunks: {
-            // Split code for performance
             'vendor-react': ['react', 'react-dom', 'react-router-dom'],
             'vendor-ui': ['framer-motion', 'lucide-react'],
             'vendor-ai': ['@google/genai'],
