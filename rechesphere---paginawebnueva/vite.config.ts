@@ -15,14 +15,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     define: {
-      // Inyectamos la clave en el cliente
+      // Vite reemplazará literalmente "process.env.API_KEY" por el string de la clave en el código final.
+      // Es la forma más segura y compatible con Vercel.
       'process.env.API_KEY': JSON.stringify(API_KEY),
-      
-      // Polyfill simple para evitar errores de librerías que buscan "process"
-      'process.env': {
-        API_KEY: API_KEY,
-        NODE_ENV: mode
-      }
     },
     build: {
       rollupOptions: {
